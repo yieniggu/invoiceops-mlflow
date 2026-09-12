@@ -1,0 +1,13 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# MLflow and operational artifacts
+mlruns/
+artifacts/
+logs/
+
+# Local tooling
+.DS_Store
+*.log
