@@ -39,20 +39,18 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
-        mc alias set local http://minio:9000 minio minio-local-password &&
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
         mc mb --ignore-existing local/mlflow-artifacts
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio-local-password
     restart: "no"
 
   mlflow:
     build:
       context: .
       dockerfile: Dockerfile.mlflow
-    command: >-
-      mlflow server
-      --backend-store-uri postgresql://mlflow:mlflow-local-password@postgres:5432/mlflow
-      --artifacts-destination s3://mlflow-artifacts
-      --host 0.0.0.0
-      --port 5000
+    command: mlflow server --app-name=basic-auth
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,8 +60,23 @@ services:
       AWS_ACCESS_KEY_ID: minio
       AWS_SECRET_ACCESS_KEY: minio-local-password
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      MLFLOW_ARTIFACTS_DESTINATION: s3://mlflow-artifacts
+      MLFLOW_AUTH_CONFIG_PATH: /run/mlflow-auth/auth.ini
+      MLFLOW_AUTH_DATABASE_URI: postgresql://mlflow:mlflow-local-password@postgres:5432/mlflow
+      MLFLOW_AUTH_ADMIN_USERNAME: ${MLFLOW_AUTH_ADMIN_USERNAME:?MLFLOW_AUTH_ADMIN_USERNAME must be set in .env}
+      MLFLOW_AUTH_ADMIN_PASSWORD: ${MLFLOW_AUTH_ADMIN_PASSWORD:?MLFLOW_AUTH_ADMIN_PASSWORD must be set in .env}
+      MLFLOW_BACKEND_STORE_URI: postgresql://mlflow:mlflow-local-password@postgres:5432/mlflow
+      MLFLOW_FLASK_SERVER_SECRET_KEY: ${MLFLOW_FLASK_SERVER_SECRET_KEY:?MLFLOW_FLASK_SERVER_SECRET_KEY must be set in .env}
+      MLFLOW_HOST: 0.0.0.0
+      MLFLOW_PORT: "5000"
     ports:
       - "127.0.0.1:5000:5000"
+    healthcheck:
+      test: ["CMD", "python", "/usr/local/bin/mlflow-healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
 volumes:
   postgres_data:

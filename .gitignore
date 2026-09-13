@@ -2,11 +2,13 @@
 .env
 .env.*
 !.env.example
+.codegraph/
 
 # MLflow and operational artifacts
 mlruns/
 artifacts/
 logs/
+backups/
 
 # Local tooling
 .DS_Store
