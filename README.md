@@ -1,7 +1,7 @@
 # InvoiceOps MLflow
 
 Stack local e independiente de MLflow para InvoiceOps. MLflow 3.16.0 ejecuta
-Basic Auth y Workspaces con PostgreSQL para metadata y autorización, y MinIO
+Basic Auth, Workspaces y RBAC con PostgreSQL para metadata y autorización, y MinIO
 como almacenamiento S3-compatible para artefactos.
 
 ## Requisitos
@@ -110,11 +110,44 @@ Un usuario puede usar varios Workspaces seleccionando un valor distinto de
 lógicamente por Workspace; `default` continúa disponible para recursos
 preexistentes.
 
-Este ticket no asigna usuarios, memberships, grupos ni permisos por Workspace.
-La capacidad demostrada es administrativa: la cuenta administradora crea y usa
-varios Workspaces. El RBAC y la pertenencia de usuarios se implementarán en
-`MLFLOW-04`; la sincronización idempotente desde InvoiceOps se implementará en
-`MLFLOW-07`.
+## RBAC y grupos
+
+Con Basic Auth y `--enable-workspaces`, MLflow 3.16 habilita sus roles RBAC
+por Workspace; no requiere otro flag de servidor. La aplicación académica sigue
+siendo la fuente de verdad: este repositorio no lee ni sincroniza usuarios o
+grupos de InvoiceOps. Esa integración se congela en `INT-02` y el provisioning
+idempotente corresponde a `MLFLOW-07`.
+
+El administrador de plataforma crea usuarios, roles y asignaciones con
+`AuthServiceClient` y las APIs `create_role`, `add_role_permission` y
+`assign_role`. Un rol puede asignarse a varios usuarios y un usuario puede tener
+roles en varios grupos y Workspaces.
+
+La política mínima es:
+
+- El rol de miembro del Workspace tiene `(workspace, *, USE)`: permite entrar al
+  Workspace y crear recursos, pero no edita recursos ajenos.
+- Cada rol de grupo tiene `EDIT` únicamente sobre los IDs/nombres de recursos de
+  ese grupo. MLflow 3.16 no interpreta prefijos como patrones de recursos: un
+  patrón concreto es el ID/nombre exacto o `*`.
+- El rol administrativo de la organización tiene `(workspace, *, MANAGE)` y
+  puede administrar roles, permisos y asignaciones dentro de ese Workspace.
+
+Los permisos efectivos se acumulan por máximo (`MANAGE > EDIT > USE > READ`).
+No existe un deny explícito que pueda anular un grant mayor; por eso no se debe
+otorgar `EDIT` con wildcard a un miembro que necesite aislamiento entre grupos.
+
+Se adelanta sólo la convención mínima necesaria para ubicar recursos de grupo:
+
+```text
+experiment: group/<group-slug>/invoice-risk
+registered model: group-<group-slug>-invoice-review
+```
+
+El administrador debe agregar `EDIT` al rol de grupo para el ID/nombre exacto
+de cada recurso recién creado. `MLFLOW-05`, después de `ML-02`, formaliza y
+amplía ownership, trabajo individual y tags; no se implementan tags en este
+ticket.
 
 ## Verificación y smoke
 
@@ -160,6 +193,28 @@ recursos de evidencia en PostgreSQL y MinIO:
 ./scripts/mlflow-workspaces-smoke.sh
 ```
 
+El smoke RBAC es opt-in y usa cuentas no autorizadas reales para comprobar el
+rechazo de edición entre grupos. Crea fixtures de experimentos y Registered
+Models para los grupos A y B, concede `EDIT` sólo al ID exacto del experimento y
+al nombre exacto del modelo con `resource_type="registered_model"`, y comprueba
+una edición permitida sobre el recurso propio y una denegada entre grupos para
+cada tipo. También asigna el mismo rol a más de un usuario, comprueba un usuario
+con roles en dos Workspaces y verifica que un Workspace Manager puede crear un
+rol. No imprime contraseñas ni secretos:
+
+```bash
+./scripts/mlflow-rbac-smoke.sh
+```
+
+El smoke reutiliza exclusivamente los Workspaces, usuarios y roles con el
+prefijo `mlflow-rbac-smoke-`, y Registered Models cuyo slug de grupo usa ese
+prefijo; elimina selectivamente sus usuarios, roles y modelos al iniciar y
+finalizar. Conserva los tres experimentos de fixture porque MLflow sólo permite
+eliminar Workspaces vacíos y el borrado de experimentos es lógico. No modifica
+recursos fuera de esos nombres controlados. La cobertura runtime valida el
+aislamiento de edición para experimentos y Registered Models; tags, ownership y
+provisioning siguen fuera de alcance y corresponden a trabajo posterior.
+
 Si el servidor no inicia, revisa errores sin imprimir el entorno completo:
 
 ```bash
@@ -181,9 +236,8 @@ públicas locales preexistentes de PostgreSQL y MinIO continúan aisladas de la
 red del host y no son aptas para ningún entorno compartido.
 
 La autorización de una instalación nueva es fail-closed:
-`grant_default_workspace_access=false`. Los Workspaces están habilitados, pero
-RBAC, grupos, SSO, HTTPS, acceso remoto y provisioning siguen fuera del alcance
-de este batch.
+`grant_default_workspace_access=false`. Workspaces y RBAC están habilitados;
+SSO, HTTPS, acceso remoto y provisioning siguen fuera del alcance de este batch.
 
 Este stack es sólo local. No reutilices este patrón ni sus secretos en entornos
 compartidos, remotos o de producción.
