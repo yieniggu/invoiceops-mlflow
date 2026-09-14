@@ -50,7 +50,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.mlflow
-    command: mlflow server --app-name=basic-auth
+    command: mlflow server --app-name=basic-auth --enable-workspaces
     depends_on:
       postgres:
         condition: service_healthy
