@@ -115,8 +115,10 @@ preexistentes.
 Con Basic Auth y `--enable-workspaces`, MLflow 3.16 habilita sus roles RBAC
 por Workspace; no requiere otro flag de servidor. La aplicación académica sigue
 siendo la fuente de verdad: este repositorio no lee ni sincroniza usuarios o
-grupos de InvoiceOps. Esa integración se congela en `INT-02` y el provisioning
-idempotente corresponde a `MLFLOW-07`.
+grupos de InvoiceOps. INT-02 establece `User.rut` normalizado como el nombre de
+usuario de MLflow y `group-<Group.id>` como el rol de grupo, donde `Group.id` es
+el UUID canónico de InvoiceOps. El aprovisionamiento idempotente corresponde a
+`MLFLOW-07`.
 
 El administrador de plataforma crea usuarios, roles y asignaciones con
 `AuthServiceClient` y las APIs `create_role`, `add_role_permission` y
@@ -140,14 +142,16 @@ otorgar `EDIT` con wildcard a un miembro que necesite aislamiento entre grupos.
 Se adelanta sólo la convención mínima necesaria para ubicar recursos de grupo:
 
 ```text
-experiment: group/<group-slug>/invoice-risk
-registered model: group-<group-slug>-invoice-review
+experiment: group/<Group.id>/invoice-risk
+registered model: group-<Group.id>-invoice-review
 ```
 
-El administrador debe agregar `EDIT` al rol de grupo para el ID/nombre exacto
-de cada recurso recién creado. `MLFLOW-05`, después de `ML-02`, formaliza y
-amplía ownership, trabajo individual y tags; no se implementan tags en este
-ticket.
+El administrador debe agregar `EDIT` al rol de grupo para el ID/nombre exacto de
+cada recurso recién creado. `Group.name` no es una identidad ni un prefijo de
+recursos porque es mutable y no único. El contrato completo está en
+`../dev/tickets/INT-02_ownership_academico_mlflow.md`. MLFLOW-05, después de
+ML-02, formaliza y amplía la propiedad, el trabajo individual y las etiquetas;
+este ticket no implementa etiquetas.
 
 ## Verificación y smoke
 
@@ -194,26 +198,31 @@ recursos de evidencia en PostgreSQL y MinIO:
 ```
 
 El smoke RBAC es opt-in y usa cuentas no autorizadas reales para comprobar el
-rechazo de edición entre grupos. Crea fixtures de experimentos y Registered
-Models para los grupos A y B, concede `EDIT` sólo al ID exacto del experimento y
-al nombre exacto del modelo con `resource_type="registered_model"`, y comprueba
-una edición permitida sobre el recurso propio y una denegada entre grupos para
-cada tipo. También asigna el mismo rol a más de un usuario, comprueba un usuario
-con roles en dos Workspaces y verifica que un Workspace Manager puede crear un
-rol. No imprime contraseñas ni secretos:
+rechazo de edición entre grupos. Usa fixtures UUID `Group.id` deterministas y
+sintácticamente válidos, y verifica el rol canónico `group-<Group.id>`, el
+experimento `group/<Group.id>/invoice-risk` y el Registered Model
+`group-<Group.id>-invoice-review` antes de probar la autorización. Concede `EDIT`
+sólo al ID exacto del experimento y al nombre del Registered Model mediante
+`resource_type="registered_model"`, y luego verifica una edición permitida sobre
+el recurso propio y una denegada entre grupos para cada tipo de recurso. También
+asigna un rol de grupo a varios usuarios, comprueba un usuario con roles en dos
+Workspaces y verifica que un Workspace Manager pueda crear un rol. No imprime
+contraseñas ni secretos:
 
 ```bash
 ./scripts/mlflow-rbac-smoke.sh
 ```
 
-El smoke reutiliza exclusivamente los Workspaces, usuarios y roles con el
-prefijo `mlflow-rbac-smoke-`, y Registered Models cuyo slug de grupo usa ese
-prefijo; elimina selectivamente sus usuarios, roles y modelos al iniciar y
-finalizar. Conserva los tres experimentos de fixture porque MLflow sólo permite
-eliminar Workspaces vacíos y el borrado de experimentos es lógico. No modifica
-recursos fuera de esos nombres controlados. La cobertura runtime valida el
-aislamiento de edición para experimentos y Registered Models; tags, ownership y
-provisioning siguen fuera de alcance y corresponden a trabajo posterior.
+El smoke reutiliza únicamente los Workspaces y usuarios `mlflow-rbac-smoke-`, los
+roles deterministas exactos `group-<Group.id>` y los Registered Models bajo el
+prefijo UUID fijo del smoke. Elimina selectivamente esos usuarios, roles y modelos
+antes y después de ejecutarse. Conserva los tres experimentos de fixture porque
+MLflow sólo permite eliminar Workspaces vacíos y el borrado de experimentos es
+lógico. No modifica recursos fuera de esos nombres controlados. La cobertura de
+runtime valida el aislamiento de edición para experimentos y Registered Models;
+las etiquetas, la ampliación de propiedad y el aprovisionamiento siguen fuera de
+alcance para trabajo posterior. El aprovisionamiento y la reconciliación
+corresponden a MLFLOW-07.
 
 Si el servidor no inicia, revisa errores sin imprimir el entorno completo:
 

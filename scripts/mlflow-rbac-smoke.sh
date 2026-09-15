@@ -1,10 +1,16 @@
 #!/bin/sh
 set -eu
 
+smoke_env_file="${MLFLOW_SMOKE_ENV_FILE:-.env}"
+
+compose() {
+  docker compose --env-file "$smoke_env_file" "$@"
+}
+
 wait_for_mlflow() {
   attempt=1
   while [ "$attempt" -le 30 ]; do
-    container_id="$(docker compose ps -q mlflow)"
+    container_id="$(compose ps -q mlflow)"
     if [ -n "$container_id" ] && [ "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" = "healthy" ]; then
       return 0
     fi
@@ -18,9 +24,10 @@ wait_for_mlflow() {
 
 wait_for_mlflow
 
-docker compose exec -T mlflow python - <<'PY'
+compose exec -T mlflow python - <<'PY'
 import os
 import secrets
+import uuid
 from contextlib import contextmanager
 
 import mlflow
@@ -39,18 +46,27 @@ USERS = {
     "multi": f"{PREFIX}-multi",
     "manager": f"{PREFIX}-manager",
 }
-REGISTERED_MODELS = {
-    "group_a": "group-mlflow-rbac-smoke-group-a-invoice-review",
-    "group_b": "group-mlflow-rbac-smoke-group-b-invoice-review",
+GROUP_IDS = {
+    "group_a": "018f2d1c-6b9e-4d83-8c95-7e0d71d05a01",
+    "group_b": "018f2d1c-6b9e-4d83-8c95-7e0d71d05a02",
+    "group_c": "018f2d1c-6b9e-4d83-8c95-7e0d71d05a03",
 }
-REGISTERED_MODEL_PREFIX = f"group-{PREFIX}"
+GROUP_ROLE_NAMES = {name: f"group-{group_id}" for name, group_id in GROUP_IDS.items()}
+EXPERIMENT_NAMES = {
+    name: f"group/{group_id}/invoice-risk" for name, group_id in GROUP_IDS.items()
+}
+REGISTERED_MODELS = {
+    "group_a": f"group-{GROUP_IDS['group_a']}-invoice-review",
+    "group_b": f"group-{GROUP_IDS['group_b']}-invoice-review",
+}
+REGISTERED_MODEL_PREFIX = "group-018f2d1c-6b9e-4d83-8c95-7e0d71d05a"
 ROLE_NAMES = (
     f"{PREFIX}-workspace-one-member",
-    f"{PREFIX}-workspace-one-group-a",
-    f"{PREFIX}-workspace-one-group-b",
+    GROUP_ROLE_NAMES["group_a"],
+    GROUP_ROLE_NAMES["group_b"],
     f"{PREFIX}-workspace-one-manager",
     f"{PREFIX}-workspace-two-member",
-    f"{PREFIX}-workspace-two-group-c",
+    GROUP_ROLE_NAMES["group_c"],
     f"{PREFIX}-manager-created",
 )
 
@@ -82,6 +98,15 @@ def identity(username, password, workspace):
 admin_auth = get_app_client("basic-auth", tracking_uri=TRACKING_URI)
 passwords = {name: secrets.token_urlsafe(24) for name in USERS}
 created_role_ids = []
+
+
+def assert_group_identity_contract():
+    for name, group_id in GROUP_IDS.items():
+        assert str(uuid.UUID(group_id)) == group_id, f"{name} fixture must be a canonical UUID"
+        assert GROUP_ROLE_NAMES[name] == f"group-{group_id}"
+        assert EXPERIMENT_NAMES[name] == f"group/{group_id}/invoice-risk"
+    for name, model_name in REGISTERED_MODELS.items():
+        assert model_name == f"group-{GROUP_IDS[name]}-invoice-review"
 
 
 def delete_previous_smoke_roles():
@@ -180,15 +205,16 @@ def expect_registered_model_edit_denied(username, password, workspace, name):
 
 
 try:
+    assert_group_identity_contract()
     delete_previous_smoke_roles()
     delete_smoke_users()
     ensure_workspace(WORKSPACE_ONE)
     ensure_workspace(WORKSPACE_TWO)
     delete_smoke_registered_models()
 
-    group_a = ensure_experiment(WORKSPACE_ONE, "group/group-a/invoice-risk")
-    group_b = ensure_experiment(WORKSPACE_ONE, "group/group-b/invoice-risk")
-    group_c = ensure_experiment(WORKSPACE_TWO, "group/group-c/invoice-risk")
+    group_a = ensure_experiment(WORKSPACE_ONE, EXPERIMENT_NAMES["group_a"])
+    group_b = ensure_experiment(WORKSPACE_ONE, EXPERIMENT_NAMES["group_b"])
+    group_c = ensure_experiment(WORKSPACE_TWO, EXPERIMENT_NAMES["group_c"])
     group_a_model = create_registered_model(WORKSPACE_ONE, REGISTERED_MODELS["group_a"])
     group_b_model = create_registered_model(WORKSPACE_ONE, REGISTERED_MODELS["group_b"])
 
@@ -203,7 +229,7 @@ try:
     )
     create_role(
         WORKSPACE_ONE,
-        f"{PREFIX}-workspace-one-group-a",
+        GROUP_ROLE_NAMES["group_a"],
         (
             ("experiment", group_a.experiment_id, "EDIT"),
             ("registered_model", group_a_model.name, "EDIT"),
@@ -212,7 +238,7 @@ try:
     )
     create_role(
         WORKSPACE_ONE,
-        f"{PREFIX}-workspace-one-group-b",
+        GROUP_ROLE_NAMES["group_b"],
         (
             ("experiment", group_b.experiment_id, "EDIT"),
             ("registered_model", group_b_model.name, "EDIT"),
@@ -233,7 +259,7 @@ try:
     )
     create_role(
         WORKSPACE_TWO,
-        f"{PREFIX}-workspace-two-group-c",
+        GROUP_ROLE_NAMES["group_c"],
         (("experiment", group_c.experiment_id, "EDIT"),),
         (USERS["multi"],),
     )

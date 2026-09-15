@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+smoke.env
 .codegraph/
 
 # MLflow and operational artifacts
