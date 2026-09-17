@@ -139,19 +139,34 @@ Los permisos efectivos se acumulan por máximo (`MANAGE > EDIT > USE > READ`).
 No existe un deny explícito que pueda anular un grant mayor; por eso no se debe
 otorgar `EDIT` con wildcard a un miembro que necesite aislamiento entre grupos.
 
-Se adelanta sólo la convención mínima necesaria para ubicar recursos de grupo:
+## Convenciones de ownership
+
+Los recursos owner-scoped usan estas convenciones canónicas dentro del Workspace
+de `Organization.slug`:
 
 ```text
+individual experiment: student/<created_by_rut>/invoice-risk
+individual registered model: student-<created_by_rut>-invoice-review
 experiment: group/<Group.id>/invoice-risk
 registered model: group-<Group.id>-invoice-review
 ```
 
+Para trabajo individual, `created_by_rut` siempre identifica al owner del
+recurso; no existe delegación. Los tags `organization_slug`, `owner_type`,
+`owner_id` y `created_by_rut` permiten resolver el owner desde la UI y deben
+aplicarse también al Registered Model owner-scoped. `owner_type` sigue limitado
+a `user` o `group`.
+
+`invoice-review-production` es el Registered Model compartido de producción. Es
+una excepción explícita: no tiene owner académico, por lo que no recibe tags de
+ownership y no se fuerza un `owner_type=shared` inválido. Su promoción y
+automatización no se implementan aquí.
+
 El administrador debe agregar `EDIT` al rol de grupo para el ID/nombre exacto de
 cada recurso recién creado. `Group.name` no es una identidad ni un prefijo de
 recursos porque es mutable y no único. El contrato completo está en
-`../dev/tickets/INT-02_ownership_academico_mlflow.md`. MLFLOW-05, después de
-ML-02, formaliza y amplía la propiedad, el trabajo individual y las etiquetas;
-este ticket no implementa etiquetas.
+`../dev/tickets/INT-02_ownership_academico_mlflow.md`. MLFLOW-07 conserva el
+aprovisionamiento y la reconciliación fuera de este alcance.
 
 ## Verificación y smoke
 
