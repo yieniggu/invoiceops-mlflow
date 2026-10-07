@@ -1,6 +1,6 @@
 # InvoiceOps MLflow
 
-Stack local e independiente de MLflow para InvoiceOps. MLflow 3.16.0 ejecuta
+Stack local e independiente de MLflow para InvoiceOps. MLflow 3.16.1 ejecuta
 Basic Auth, Workspaces y RBAC con PostgreSQL para metadata y autorización, y MinIO
 como almacenamiento S3-compatible para artefactos.
 
@@ -57,6 +57,15 @@ dependencias. Compose espera que PostgreSQL y MinIO estén saludables, crea el
 bucket `mlflow-artifacts` de forma idempotente y después inicia MLflow. MLflow
 escucha exclusivamente en `127.0.0.1:5000`; PostgreSQL y MinIO no publican
 puertos al host.
+
+El pin `3.16.1` incorpora la corrección publicada que permite servir la UI a
+usuarios no administradores autenticados con autorización fail-closed. Antes de
+actualizar una instalación con datos, respalda la base PostgreSQL que contiene
+metadata y autorización, verifica el archivo de respaldo y conserva la imagen
+anterior para una reversión controlada; nunca elimines los volúmenes al recrear
+únicamente MLflow. La autenticación anónima y las rutas desconocidas siguen
+denegadas. Este parche no concede permisos nuevos sobre recursos ni sustituye
+el aprovisionamiento manual de cuentas.
 
 Abre `http://127.0.0.1:5000` e inicia sesión con el usuario administrador local.
 Los clientes autenticados usan:
@@ -138,6 +147,105 @@ La política mínima es:
 Los permisos efectivos se acumulan por máximo (`MANAGE > EDIT > USE > READ`).
 No existe un deny explícito que pueda anular un grant mayor; por eso no se debe
 otorgar `EDIT` con wildcard a un miembro que necesite aislamiento entre grupos.
+
+### Cuenta técnica de lectura para InvoiceOps App
+
+Asigna una identidad no administradora distinta a cada integración. En el
+Workspace autorizado necesita `USE` sobre `(workspace, *)` y `READ` sólo sobre
+los IDs de Experiments y nombres de Registered Models que consume. No asignes
+`EDIT`, `MANAGE`, permisos sobre otro Workspace ni patrones `*` para modelos o
+experimentos. Comprueba con recursos propios y ajenos **existentes**: lectura
+propia permitida, edición de recurso existente y lectura directa de recursos
+ajenos denegadas. Audita periódicamente las asignaciones y revoca el rol o la
+cuenta cuando termine la integración; rota su credencial fuera del repositorio.
+
+**Operación con MLflow 3.16.1 (sólo en el contenedor local):** inventaría primero
+el usuario técnico, sus roles con `AuthServiceClient.list_user_roles(username)`
+y, para cada rol, `list_role_permissions(role.id)`. Comprueba que
+`get_user(username).is_admin` sea falso, que sólo haya roles en los Workspaces
+previstos y que el conjunto de grants sea exactamente `(workspace, *, USE)` en
+el Workspace previsto más `(experiment, <ID>, READ)` y
+`(registered_model, <nombre>, READ)` para cada recurso autorizado. Revisa
+asignaciones adicionales y permisos efectivos antes de aceptar el inventario:
+los roles se acumulan y una asignación extra puede ampliar el acceso. No listes
+ni alteres usuarios o grants ajenos como parte de una prueba de fixture.
+
+Con una fixture temporal identificada por un prefijo propio, comprueba mediante
+solicitudes autenticadas y `X-MLFLOW-WORKSPACE` explícito: `GET` de Experiment y
+Registered Model propios existentes → `200`; edición de un Experiment existente
+→ `403` sin cambio de tag; `GET` directo de Experiment y modelo conocidos y
+existentes en otro Workspace propio de prueba → `403`. Un listado vacío no
+demuestra la denegación de lectura. Para rotar la credencial de esa cuenta, usa
+`AuthServiceClient.update_user_password(username, new_password)` como admin
+local (la ruta self-service requiere `current_password`): verifica contraseña
+anterior → `401` y nueva → `200` en la misma lectura propia. Tras actualizar al
+consumidor, revoca la asignación exacta con `unassign_role(username, role_id)`,
+verifica `list_user_roles(username) == []` y lectura del Workspace con la nueva
+contraseña → `403`; no hay un deny que anule otros roles. Elimina la cuenta de
+fixture con `delete_user(username)` y el rol propio con `delete_role(role_id)`;
+confirma su ausencia. Para revocar una integración real, coordina primero su
+ventana de servicio y audita todas las asignaciones antes de retirar la cuenta.
+Genera las contraseñas en memoria privada; no las pongas en argumentos, logs,
+comandos versionados ni salidas compartidas. Estas pruebas de fixture no
+significan que se haya rotado una cuenta persistente de producción.
+
+**Límite nativo:** `USE` permite también crear recursos nuevos en ese Workspace;
+esta cuenta no es de solo lectura absoluta. `READ` exacto y las denegaciones de
+edición y de otros Workspaces reducen el alcance, pero no eliminan esa capacidad.
+Si se exige impedir toda creación, hace falta aprobar una frontera de autorización
+distinta; no retires `USE` afirmando que la UI sigue funcionando ni desactives
+`fail-closed`.
+
+### Respaldo y restauración de metadata y autorización
+
+Antes de un cambio de versión, guarda un archivo PostgreSQL en formato custom
+que incluya **ambos** esquemas, de tracking y Basic Auth. Mantén el respaldo,
+la configuración privada y la imagen anterior; no sobrescribas la base operada.
+Verifica permisos `600`, hash SHA-256 y el inventario con `pg_restore --list`.
+Para probar el rollback, restaura con `pg_restore --exit-on-error
+--single-transaction` únicamente en una base **nueva y vacía**, del mismo major
+de PostgreSQL, con su red y credenciales privadas propias. Comprueba conteos
+de tablas y filas, claves foráneas validadas, tablas de autorización, y arranca
+la versión de MLflow bajo prueba contra esa base aislada: un administrador
+autenticado debe consultar metadata y el acceso anónimo debe devolver `401`.
+No confundas una lectura del archivo ni un arranque de la versión nueva con
+una prueba de arranque de la imagen anterior; no restaures nunca sobre la base
+original sin un procedimiento y autorización independientes. Esta prueba de
+metadata no demuestra recuperación de objetos de artifact almacenados aparte.
+
+**Ensayo local CR-007 (2026-10-06):** además de restaurar el archivo en una
+instancia nueva con MLflow 3.16.1, se restauró otra vez en PostgreSQL 16.9
+aislado y se arrancó la imagen anterior **3.16.0** con un solo worker y ambas
+URIs de base apuntando exclusivamente al clon. El servidor anterior leyó
+metadata con autenticación (`200`) y rechazó acceso anónimo (`401`); permanecieron
+71 tablas, 5 filas, 66 claves foráneas validadas y las revisiones de tracking
+y autorización. La base restaurada tenía un administrador y **cero** roles o
+asignaciones: se comprobaron los conteos y la ausencia de referencias huérfanas,
+no permisos históricos de roles que no existían en ese respaldo. Se retiraron
+contenedores, red, volumen anónimo y credenciales nuevos; el respaldo y los
+servicios operados no se restauraron ni alteraron. Esta evidencia acredita
+lectura de metadata/autorización con la imagen anterior, **no** descarga de
+artifacts externos, recuperación completa de MinIO o rollback productivo.
+
+### Inventario previo a limpiar fixtures
+
+Antes de borrar metadata o hacer `CASCADE`, conserva en un manifiesto privado
+`700/600` la identidad del Workspace, cada experimento, run, versión y **URI
+completa** del artifact de la fixture. Elimina artifacts propios mediante el
+proxy nativo usando sólo rutas exactas comprobadas y verifica su ausencia antes
+de eliminar las referencias; luego inventaría y retira sólo la cuenta, roles y
+Workspace propios. Si faltan URIs o IDs, detén el borrado físico: ni un prefijo
+parecido ni una búsqueda general en el bucket prueban propiedad. Registra el
+objeto como pendiente de procedencia, no como eliminado.
+
+Para una fixture antigua sin metadata, recupera la ruta literal sólo de un recibo
+propio o un log de subida/lectura del proxy y comprueba en el código de la versión
+operada cómo se asigna al Workspace; conserva esa procedencia en el manifiesto
+antes de actuar. Un `DELETE` aceptado o un directorio vacío no prueban por sí
+solos la ausencia física: verifica además la ruta exacta y clasifica el error de
+objeto faltante en la respuesta, sin divulgar trazas ni URLs firmadas. Si no hay
+procedencia o la respuesta es ambigua, deja el objeto como pendiente; no repitas
+el borrado a ciegas ni listes el bucket completo.
 
 ## Convenciones de ownership
 
