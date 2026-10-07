@@ -2,8 +2,10 @@
 .env
 .env.*
 !.env.example
+invoiceops-local.env
 smoke.env
 .codegraph/
+__pycache__/
 
 # MLflow and operational artifacts
 mlruns/

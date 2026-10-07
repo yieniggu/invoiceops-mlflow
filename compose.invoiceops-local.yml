@@ -1,0 +1,34 @@
+# Only for the dedicated InvoiceOps local project; never use with a shared deployment.
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${LOCAL_MLFLOW_DB_PASSWORD:?Set the local MLflow database password}
+
+  minio:
+    environment:
+      MINIO_ROOT_USER: ${LOCAL_MINIO_USER:?Set the local MinIO user}
+      MINIO_ROOT_PASSWORD: ${LOCAL_MINIO_PASSWORD:?Set the local MinIO password}
+
+  minio-init:
+    environment:
+      MINIO_ROOT_USER: ${LOCAL_MINIO_USER:?Set the local MinIO user}
+      MINIO_ROOT_PASSWORD: ${LOCAL_MINIO_PASSWORD:?Set the local MinIO password}
+
+  mlflow:
+    command: mlflow server --app-name=basic-auth --enable-workspaces --uvicorn-opts "--timeout-keep-alive=120"
+    environment:
+      AWS_ACCESS_KEY_ID: ${LOCAL_MINIO_USER:?Set the local MinIO user}
+      AWS_SECRET_ACCESS_KEY: ${LOCAL_MINIO_PASSWORD:?Set the local MinIO password}
+      MLFLOW_SERVER_ALLOWED_HOSTS: "mlflow:5000,127.0.0.1:5000,127.0.0.1:${LOCAL_MLFLOW_PORT:-5500}"
+      MLFLOW_AUTH_DATABASE_URI: postgresql+psycopg2://mlflow:${LOCAL_MLFLOW_DB_PASSWORD:?Set the local MLflow database password}@postgres:5432/mlflow
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://mlflow:${LOCAL_MLFLOW_DB_PASSWORD:?Set the local MLflow database password}@postgres:5432/mlflow
+    ports: !override
+      - "127.0.0.1:${LOCAL_MLFLOW_PORT:-5500}:5000"
+    networks:
+      - default
+      - invoiceops_local_link
+
+networks:
+  invoiceops_local_link:
+    external: true
+    name: invoiceops-local-link
