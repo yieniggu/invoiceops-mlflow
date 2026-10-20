@@ -121,6 +121,89 @@ preexistentes.
 
 ## RBAC y grupos
 
+### Estado de MLFLOW-07 y política local vigente
+
+**MLFLOW-07 COMPLETED_LOCAL_VALIDATED (2026-10-20)**: InvoiceOps App validó el
+provisioning con PostgreSQL 16.9, MLflow 3.16.1, Prisma y HTTP real de `createApp`
+en aislamiento local; verificación independiente de sus cinco criterios originales.
+MLflow pasa a **7/9 (77.8%)**, sin completar MLFLOW-06/08, Stack ni despliegue App.
+La [evidencia operacional y comandos por etapas](../invoiceops-app/apps/backend/test/runtime/MLFLOW07_PROOF.md)
+preserva los tres intentos fallidos y el PASS histórico, además del nuevo cierre
+`147273ec3819672ab9fd67b6` y la preparación fallida `642a7929350b5bbeb94e3ce2`.
+La operación manual descrita
+a continuación es alternativa e histórica, no ausencia actual de provisioning.
+
+`POST /admin/mlflow/provision` pertenece exclusivamente al administrador
+autenticado de **plataforma**, con CSRF y JSON estricto `organizationSlug` más
+`dryRun` booleano obligatorio. `ADMIN` académico sólo recibe `MANAGE` dentro de
+su Workspace; no adquiere privilegio para invocar el endpoint. El Workspace
+conserva exactamente el slug y cada usuario su RUT normalizado.
+
+La política histórica de contraseña inicial de seis dígitos del RUT queda
+**sustituida**: MLflow exige al menos 12 caracteres. El operador prepara
+contraseñas aleatorias únicas en un archivo JSON local privado externo al
+repositorio, regular, sin symlinks/hardlinks, del UID del backend y con permisos
+`0600` o más restrictivos. El backend sólo lo lee para crear cuentas nuevas;
+no modifica contraseñas de cuentas reutilizadas. Si falta una credencial
+necesaria, no se realiza ninguna mutación. Dry-run no consulta el archivo ni
+escribe. La entrega de credenciales es privada y manual, sin invitaciones/reset.
+
+Los roles administrados del Workspace son todos los `group-<UUID>` y los roles
+reservados `invoiceops-base`, `invoiceops-managers` e
+`invoiceops-owner-<User.id UUID>`. La adopción de nombres coincidentes es una
+política explícita, no prueba de procedencia. Se reconcilian sus permisos y
+asignaciones, incluidas bajas, degradaciones y grupos eliminados. `USE` base y
+`MANAGE` de gestores usan el recurso Workspace; `EDIT` individual/grupal se
+limita al ID exacto del Experiment y nombre exacto del modelo canónico. No se
+crean runs, versiones ni `invoice-review-production`; no se falsifica
+`created_by_rut` ni se borran recursos huérfanos. No se alteran roles ajenos,
+grants directos, administradores globales ni otros Workspaces. El acceso
+independiente puede seguir existiendo y `USE` permite crear recursos nuevos.
+
+La configuración administrativa está separada de `MLFLOW_READ_*`:
+`MLFLOW_PROVISION_MODE`, `MLFLOW_PROVISION_URL`, `MLFLOW_PROVISION_USERNAME`,
+`MLFLOW_PROVISION_PASSWORD`, `MLFLOW_PROVISION_SECRETS_FILE` y `NODE_ENV`.
+Sólo se habilita explícitamente el modo de desarrollo local con HTTP en
+loopback literal; no se habilita despliegue remoto, réplicas ni infraestructura.
+Máximo una ejecución por proceso y una solicitud por organización/minuto
+(`409/429`), 60 s globales, 5 s/llamada, 100 usuarios, 50 grupos, 1000
+asignaciones y 2000 llamadas. Se rechazan inventarios incompletos o superiores
+a los límites antes de escribir. Los límites conservadores del inventario,
+archivo y namespace, así como la configuración exacta, están en el
+[runbook de App](../invoiceops-app/README.md#aprovisionamiento-académico-de-mlflow--mlflow-07).
+
+`200` exige plan dry-run completo o ejecución completa. Un `502/503` puede ser
+parcial: contadores agregados confirmados y efectos desconocidos se mantienen
+separados. No hay retry ciego, transacción distribuida ni rollback automático;
+el operador debe auditar antes de repetir. Deshabilitar la función no revierte
+mutaciones ya aplicadas. La prueba offline usa dobles; la prueba operacional
+posterior sí ejercitó permisos efectivos y creación/repetición/revocación en
+MLflow 3.16.1 real, con cuentas y secretos exclusivamente sintéticos externos.
+Sus **957 assertions** incluyen chunks HTTP, no 957 tests independientes;
+guardas frescas independientes **16 + 3 PASS**. La limpieza exacta de las cuatro
+ejecuciones quedó verificada sin recursos propios Docker restantes; la presencia
+de IDs basales no prueba invariancia global. Los checkpoints privados con
+secretos sintéticos se retuvieron y no se publican. Launcher `server.ts`, pool
+productivo, remoto, réplicas y preparación productiva siguen **NOT_VERIFIED**.
+La evidencia histórica no se reclasifica y esta actualización no ejecuta servicios.
+
+**Cierre final de remediación:** los ocho hallazgos CR-013/014/015/016/017/018/019/030
+están **RESOLVED_LOCAL_VERIFIED**, con CR-017 limitado a mitigación (causa histórica
+UNPROVEN). [Ledger, gates y límites vigentes](../dev/tickets/Implementado.md#cierre-final-de-remediación-local--cr-013-a-cr-019-y-cr-030-2026-10-20).
+La prueba fresca volvió a confirmar 957 assertions en cuatro fases; guardas finales
+16 + 3 + 13 PASS y backend 343/343 PASS recibidos. Auditoría independiente del éxito
+y de la preparación fallida: cero recursos propios por nonce y cero contenedores,
+redes y volúmenes del proyecto. El fallo conserva COMMAND_FAILED, causa UNKNOWN,
+`cleaned_unverified`; no se convierte en PASS por la auditoría posterior. Imágenes
+públicas compartidas preservadas, incluida base Python nueva en caché no propia;
+IDs basales presentes no acreditan invariancia global. No se publican secretos.
+La fuente se revalida antes de cada grant/asignación/retirada, con SOURCE_CHANGED
+y parciales exactos; persiste TOCTOU entre sistemas. Borrado de buffers y cierre
+independiente no garantizan eliminar strings inmutables. La preparación explícita
+`prepare-images --allow-downloads CHECKPOINT_ID` requiere autorización separada;
+`start` verifica cinco IDs locales y usa `up --no-build --pull never`, sin preparación
+automática ni fallback a red ante errores de consulta. Sin tickets adicionales.
+
 Con Basic Auth y `--enable-workspaces`, MLflow 3.16 habilita sus roles RBAC
 por Workspace; no requiere otro flag de servidor. La aplicación académica sigue
 siendo la fuente de verdad: este repositorio no lee ni sincroniza usuarios o
