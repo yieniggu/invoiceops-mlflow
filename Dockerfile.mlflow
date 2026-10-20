@@ -6,6 +6,7 @@ RUN pip install --no-cache-dir \
     "boto3==1.37.34"
 
 COPY docker/mlflow-entrypoint.sh /usr/local/bin/mlflow-entrypoint
+COPY docker/mlflow-migrate.py /usr/local/bin/mlflow-migrate.py
 COPY docker/mlflow-healthcheck.py /usr/local/bin/mlflow-healthcheck
 
 RUN chmod 755 /usr/local/bin/mlflow-entrypoint /usr/local/bin/mlflow-healthcheck

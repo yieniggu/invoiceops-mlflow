@@ -367,6 +367,23 @@ nunca debe cambiarse mientras una instancia esté activa. Las credenciales
 públicas locales preexistentes de PostgreSQL y MinIO continúan aisladas de la
 red del host y no son aptas para ningún entorno compartido.
 
+Las migraciones de tracking y autorización se ejecutan en ese orden, antes de
+iniciar workers, mediante los callbacks de MLflow 3.16.1 dentro de procesos Python
+que leen las URIs del entorno, sin incluirlas en argumentos de proceso. MinIO
+importa las credenciales como JSON por stdin y conserva su configuración privada
+en el filesystem del inicializador, sin nuevos volúmenes. El serializador exige
+`printf` interno de la shell y se detiene si no está disponible; no instala herramientas.
+Se suprimen ambas salidas de los clientes y sólo se publica un diagnóstico fijo
+de la fase fallida. Esto reduce exposición en argv, no elimina secretos del
+entorno, memoria o archivos privados ni protege frente a un administrador del host.
+
+Los contratos offline usan dependencias simuladas: no acreditan disponibilidad
+de la shell en la imagen fijada, migraciones reales ni compatibilidad S3 en runtime.
+Antes de desplegar, respalda metadata y autorización y verifica por separado el
+arranque y la inicialización idempotente con las imágenes reales. Las migraciones
+pueden no ser transaccionales; una reversión del código anterior reintroduce la
+exposición de credenciales en argv.
+
 La autorización de una instalación nueva es fail-closed:
 `grant_default_workspace_access=false`. Workspaces y RBAC están habilitados;
 SSO, HTTPS, acceso remoto y provisioning siguen fuera del alcance de este batch.

@@ -39,8 +39,43 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
-        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
-        mc mb --ignore-existing local/mlflow-artifacts
+        set +x; set -eu; LC_ALL=C; export LC_ALL; umask 077;
+        [ "$$(command -v printf)" = printf ] || { echo 'MinIO initializer requires builtin printf' >&2; exit 1; };
+        : "$${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}";
+        : "$${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}";
+        json_low=$$(printf '\001'); json_high=$$(printf '\037'); json_meta='"\';
+        json_quote() {
+          json_output='"';
+          while [ -n "$$json_input" ]; do
+            json_prefix=$${json_input%%["$$json_low"-"$$json_high""$$json_meta"]*};
+            json_output=$$json_output$$json_prefix;
+            json_input=$${json_input#"$$json_prefix"};
+            [ -n "$$json_input" ] || break;
+            json_rest=$${json_input#?}; json_char=$${json_input%"$$json_rest"};
+            case "$$json_char" in
+              '"'|'\') json_output=$$json_output\\$$json_char ;;
+              ["$$json_low"-"$$json_high"])
+                json_code=$$(printf '%d' "'$$json_char") || return 1;
+                json_escape=$$(printf '\\u%04x' "$$json_code") || return 1;
+                json_output=$$json_output$$json_escape ;;
+              *) json_output=$$json_output$$json_char ;;
+            esac;
+            json_input=$$json_rest;
+          done;
+          json_output=$$json_output'"';
+        };
+        json_input=$$MINIO_ROOT_USER;
+        json_quote >/dev/null 2>&1 || { echo 'MinIO credential serialization failed' >&2; exit 1; };
+        credentials='{"url":"http://minio:9000","api":"s3v4","path":"auto","accessKey":'$$json_output;
+        json_input=$$MINIO_ROOT_PASSWORD;
+        json_quote >/dev/null 2>&1 || { echo 'MinIO credential serialization failed' >&2; exit 1; };
+        credentials=$$credentials',"secretKey":'$$json_output'}';
+        printf '%s' "$$credentials" | mc alias import local >/dev/null 2>&1 || {
+          status=$$?; echo 'MinIO alias initialization failed' >&2; exit "$$status";
+        };
+        mc mb --ignore-existing local/mlflow-artifacts >/dev/null 2>&1 || {
+          status=$$?; echo 'MinIO bucket initialization failed' >&2; exit "$$status";
+        }
     environment:
       MINIO_ROOT_USER: minio
       MINIO_ROOT_PASSWORD: minio-local-password

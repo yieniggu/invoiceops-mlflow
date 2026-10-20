@@ -4,6 +4,13 @@ from urllib.parse import urlsplit
 
 import yaml
 
+from test_secret_argv_contract import (
+    ShellSandbox,
+    assert_no_secret_argv,
+    assert_sanitized,
+    phases,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DATABASE_URI_KEYS = ("MLFLOW_AUTH_DATABASE_URI", "MLFLOW_BACKEND_STORE_URI")
@@ -23,13 +30,13 @@ def mlflow_environment(filename):
 
 class PostgreSQLDriverContractTests(unittest.TestCase):
     def test_entrypoint_serializes_both_database_migrations_before_workers(self):
-        entrypoint = (ROOT / "docker/mlflow-entrypoint.sh").read_text(encoding="utf-8")
-        backend = 'mlflow db upgrade "$MLFLOW_BACKEND_STORE_URI"'
-        auth = 'python -m mlflow.server.auth db upgrade --url "$MLFLOW_AUTH_DATABASE_URI"'
-        self.assertIn(backend, entrypoint)
-        self.assertIn(auth, entrypoint)
-        self.assertLess(entrypoint.index(backend), entrypoint.index(auth))
-        self.assertLess(entrypoint.index(auth), entrypoint.index('exec "$@"'))
+        with ShellSandbox() as sandbox:
+            result, events = sandbox.run()
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(phases(events), ["tracking", "auth", "server-sentinel"])
+            self.assertTrue(sandbox.config.exists())
+            assert_sanitized(self, sandbox, result)
+            assert_no_secret_argv(self, sandbox, events)
 
     def assert_database_uris_use_installed_driver(self, environment, expected_password):
         self.assertEqual(set(DATABASE_URI_KEYS) & environment.keys(), set(DATABASE_URI_KEYS))

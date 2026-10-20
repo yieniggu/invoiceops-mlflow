@@ -1,0 +1,8 @@
+**
+!Dockerfile.mlflow
+!.dockerignore
+!docker/
+docker/**
+!docker/mlflow-entrypoint.sh
+!docker/mlflow-healthcheck.py
+!docker/mlflow-migrate.py

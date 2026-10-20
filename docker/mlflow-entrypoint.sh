@@ -1,4 +1,5 @@
 #!/bin/sh
+set +x
 set -eu
 
 : "${MLFLOW_AUTH_CONFIG_PATH:?MLFLOW_AUTH_CONFIG_PATH must be set}"
@@ -43,11 +44,11 @@ EOF
 
 # The backend and basic-auth stores share PostgreSQL. Initialize both schemas
 # before starting concurrent server workers; never print database URLs or secrets.
-mlflow db upgrade "$MLFLOW_BACKEND_STORE_URI" >/dev/null 2>&1 || {
+python "$(dirname "$0")/mlflow-migrate.py" tracking >/dev/null 2>&1 || {
   echo 'MLflow backend database migration failed' >&2
   exit 1
 }
-python -m mlflow.server.auth db upgrade --url "$MLFLOW_AUTH_DATABASE_URI" >/dev/null 2>&1 || {
+python "$(dirname "$0")/mlflow-migrate.py" auth >/dev/null 2>&1 || {
   echo 'MLflow authorization database migration failed' >&2
   exit 1
 }
