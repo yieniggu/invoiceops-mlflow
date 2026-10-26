@@ -16,3 +16,4 @@ backups/
 # Local tooling
 .DS_Store
 *.log
+LOCAL_SMOKE_RECEIPT.md
