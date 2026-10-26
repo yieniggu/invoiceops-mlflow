@@ -1,5 +1,11 @@
 # InvoiceOps MLflow
 
+> **Bootstrap transversal:** el orden y los límites del entorno limpio están en
+> el [runbook central de Stack](../invoiceops-stack/LOCAL_INFRASTRUCTURE_RUNBOOK.md).
+> Este README es propietario de MLflow (infraestructura, Workspaces y RBAC); no
+> duplica la ejecución integrada ni acredita destinos remotos, que permanecen
+> `NOT_VERIFIED`.
+
 Stack local e independiente de MLflow para InvoiceOps. MLflow 3.16.1 ejecuta
 Basic Auth, Workspaces y RBAC con PostgreSQL para metadata y autorización, y MinIO
 como almacenamiento S3-compatible para artefactos.

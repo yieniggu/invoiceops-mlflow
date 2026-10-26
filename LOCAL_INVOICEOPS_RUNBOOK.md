@@ -1,4 +1,9 @@
-# Operate the isolated InvoiceOps stack locally
+# Operar el stack aislado de InvoiceOps localmente
+
+> **Entrada central:** para un bootstrap limpio entre repositorios, siga primero
+> el [runbook central de Stack](../invoiceops-stack/LOCAL_INFRASTRUCTURE_RUNBOOK.md).
+> Este documento conserva la propiedad de MLflow y sus comandos exactos; no
+> sustituye la validación integrada ni autoriza ninguna operación remota.
 
 This procedure is for a **new, disposable, loopback-only** Compose installation. Infra owns provisioning and maintenance when the local infrastructure does not already exist. Do not reuse an existing Docker project, MLflow registry, volume, environment file, or production endpoint. Run commands only after the separate operations phase is authorized; none are part of static configuration validation.
 
