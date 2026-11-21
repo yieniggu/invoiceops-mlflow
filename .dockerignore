@@ -1,6 +1,7 @@
 **
 !Dockerfile.mlflow
 !.dockerignore
+!requirements.mlflow.txt
 !docker/
 docker/**
 !docker/mlflow-entrypoint.sh

@@ -16,11 +16,12 @@ SOURCES = frozenset({
     "docker/mlflow-healthcheck.py",
     "docker/mlflow-migrate.py",
 })
-METADATA = frozenset({"Dockerfile.mlflow", ".dockerignore"})
+METADATA = frozenset({"Dockerfile.mlflow", ".dockerignore", "requirements.mlflow.txt"})
 CANONICAL_RULES = [
     "**",
     "!Dockerfile.mlflow",
     "!.dockerignore",
+    "!requirements.mlflow.txt",
     "!docker/",
     "docker/**",
     "!docker/mlflow-entrypoint.sh",
@@ -71,11 +72,11 @@ class DockerContextContractTests(unittest.TestCase):
             if tokens[0].upper() == "COPY":
                 # Fail closed on flags, JSON, or multiple sources.
                 self.assertEqual(len(tokens), 3, "COPY syntax requires policy review")
-                self.assertIn(tokens[1], SOURCES)
+                self.assertIn(tokens[1], SOURCES | {"requirements.mlflow.txt"})
                 self.assertTrue(tokens[2].startswith("/"))
                 sources.append(tokens[1])
-        self.assertEqual(len(sources), 3)
-        self.assertEqual(set(sources), SOURCES)
+        self.assertEqual(len(sources), 4)
+        self.assertEqual(set(sources), SOURCES | {"requirements.mlflow.txt"})
 
     def test_allowed_paths_are_regular_files_without_symlink_parents(self):
         for relative in sorted(SOURCES | METADATA):

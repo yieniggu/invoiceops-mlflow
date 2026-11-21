@@ -1,9 +1,20 @@
-FROM python:3.12.10-slim-bookworm
+FROM python:3.12.10-slim-bookworm@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db
 
-RUN pip install --no-cache-dir \
-    "mlflow[auth]==3.16.1" \
-    "psycopg2-binary==2.9.10" \
-    "boto3==1.37.34"
+# The whole resolved dependency set (mlflow[auth], psycopg2-binary, boto3 and everything they pull
+# in) is pinned with sha256 hashes in requirements.mlflow.txt, generated from requirements.mlflow.in:
+#   uv pip compile requirements.mlflow.in --universal --python-version 3.12 --generate-hashes \
+#     --no-header -o requirements.mlflow.txt
+# pip refuses anything that is not in that file, has another hash or would need a source build.
+COPY requirements.mlflow.txt /tmp/requirements.mlflow.txt
+RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r /tmp/requirements.mlflow.txt \
+    && rm /tmp/requirements.mlflow.txt
+
+# MLflow runs unprivileged. The entrypoint writes the auth config under /run/mlflow-auth.
+RUN groupadd --system --gid 10002 mlflow \
+    && useradd --system --uid 10002 --gid mlflow --create-home --home-dir /home/mlflow mlflow \
+    && mkdir -p /run/mlflow-auth \
+    && chown mlflow:mlflow /run/mlflow-auth \
+    && chmod 700 /run/mlflow-auth
 
 COPY docker/mlflow-entrypoint.sh /usr/local/bin/mlflow-entrypoint
 COPY docker/mlflow-migrate.py /usr/local/bin/mlflow-migrate.py
@@ -11,4 +22,5 @@ COPY docker/mlflow-healthcheck.py /usr/local/bin/mlflow-healthcheck
 
 RUN chmod 755 /usr/local/bin/mlflow-entrypoint /usr/local/bin/mlflow-healthcheck
 
+USER 10002:10002
 ENTRYPOINT ["/usr/local/bin/mlflow-entrypoint"]
