@@ -1,0 +1,13 @@
+# Standalone definition of the shared networks that compose.gateway.yml references (`edge`, `api`).
+# Needed only when this repository is run WITHOUT invoiceops-stack (restore drills, backup tests):
+#
+#   docker compose -f compose.yml -f compose.gateway.yml -f compose.networks.yml ...
+#
+# In the unified stack these networks are defined by the app's compose.production.yml instead.
+networks:
+  edge:
+    external: true
+    name: ${GATEWAY_EDGE_NETWORK:-aglai_edge}
+  api:
+    external: true
+    name: ${GATEWAY_BACKEND_NETWORK:-invoiceops_api}

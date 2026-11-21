@@ -30,6 +30,34 @@ case "$MLFLOW_FLASK_SERVER_SECRET_KEY" in
     ;;
 esac
 
+# Placeholders from example files must never reach a running service: the database password
+# (inside the URIs) and the MinIO/S3 credentials are rejected like the admin credentials.
+case "$MLFLOW_BACKEND_STORE_URI:$MLFLOW_AUTH_DATABASE_URI:${AWS_ACCESS_KEY_ID:-}:${AWS_SECRET_ACCESS_KEY:-}" in
+  *replace-with*|*REPLACE_WITH*|*changeme*)
+    echo "MLflow database or MinIO credentials must not use the example placeholder" >&2
+    exit 1
+    ;;
+esac
+
+# Production overlay (compose.gateway.yml sets MLFLOW_REJECT_PUBLIC_CREDENTIALS=1): the throwaway
+# credentials published in mlflow-local.example.env are for a local, standalone compose only and
+# must never protect a shared host. tests/test_compose_and_docs_contracts.py keeps these literals equal to
+# that file.
+if [ "${MLFLOW_REJECT_PUBLIC_CREDENTIALS:-}" = "1" ]; then
+  case "$MLFLOW_BACKEND_STORE_URI:$MLFLOW_AUTH_DATABASE_URI:${AWS_SECRET_ACCESS_KEY:-}" in
+    *mlflow-local-password*|*minio-local-password*)
+      echo "MLflow database or MinIO credentials must not use the public local example values" >&2
+      exit 1
+      ;;
+  esac
+  case "${AWS_ACCESS_KEY_ID:-}" in
+    minio)
+      echo "MLflow database or MinIO credentials must not use the public local example values" >&2
+      exit 1
+      ;;
+  esac
+fi
+
 umask 077
 mkdir -p "$(dirname "$MLFLOW_AUTH_CONFIG_PATH")"
 

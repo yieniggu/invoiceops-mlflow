@@ -1,10 +1,11 @@
 # InvoiceOps MLflow
 
-> **Bootstrap transversal:** el orden y los límites del entorno limpio están en
-> el [runbook central de Stack](../invoiceops-stack/LOCAL_INFRASTRUCTURE_RUNBOOK.md).
-> Este README es propietario de MLflow (infraestructura, Workspaces y RBAC); no
-> duplica la ejecución integrada ni acredita destinos remotos, que permanecen
-> `NOT_VERIFIED`.
+> **Flujo local de punta a punta:** la guía vigente está en
+> [`invoiceops-stack/LOCAL_E2E.md`](../invoiceops-stack/LOCAL_E2E.md) (proyecto `invoiceops-local`,
+> con `compose.local.yml`). Ahí todo el tráfico a MLflow pasa por el gateway; este repositorio ya no
+> publica MLflow directamente ni mantiene un runbook propio. Este README es propietario de MLflow
+> (infraestructura, Workspaces y RBAC); no duplica la ejecución integrada ni acredita destinos
+> remotos, que permanecen `NOT_VERIFIED`.
 
 Stack local e independiente de MLflow para InvoiceOps. MLflow 3.16.1 ejecuta
 Basic Auth, Workspaces y RBAC con PostgreSQL para metadata y autorización, y MinIO
@@ -18,6 +19,16 @@ como almacenamiento S3-compatible para artefactos.
 PostgreSQL y MinIO no exponen puertos al equipo anfitrión. Sólo la interfaz y
 endpoint de MLflow se publica en loopback.
 
+> **Alcance del compose standalone.** `compose.yml` publica MLflow en loopback
+> (`127.0.0.1:5000`) **solo para uso local**, con credenciales desechables
+> (`mlflow-local.example.env`) y sin gateway: quien llega a ese puerto es el administrador local. En
+> producción MLflow **no publica ningún puerto**: todo el acceso pasa por el gateway
+> (`compose.gateway.yml`, ver [`GATEWAY.md`](GATEWAY.md)), que autentica con tokens/sesiones de InvoiceOps,
+> aísla un workspace por contexto y rechaza las credenciales públicas del ejemplo local al arrancar.
+> Un ID de otro workspace (experimento, run, modelo registrado...) responde **404** en MLflow
+> («foreign IDs»: no se distingue «no existe» de «es de otro grupo»), tanto directo como a través del
+> gateway; ver «Mecanismo de workspace verificado en 3.16.1» en `GATEWAY.md`.
+
 ## Configuración local segura
 
 MLflow no arranca sin un `.env` local. La cuenta inicial se crea al habilitar
@@ -27,7 +38,14 @@ configuración.
 ```bash
 cp .env.example .env
 chmod 600 .env
+cat mlflow-local.example.env >> .env
 ```
+
+La última línea agrega a `.env` las credenciales **desechables** de PostgreSQL y
+MinIO (`MLFLOW_DB_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`): `compose.yml`
+ya no trae contraseñas fijas y falla al renderizarse si faltan. Sustitúyalas por
+valores propios si el equipo comparte la red. Si ya tenía volúmenes de una versión
+anterior, vea «Volúmenes: renombre y migración» en [`GATEWAY.md`](GATEWAY.md).
 
 Genera valores distintos para `MLFLOW_AUTH_ADMIN_PASSWORD` y
 `MLFLOW_FLASK_SERVER_SECRET_KEY`; por ejemplo, cada valor aleatorio puede
@@ -72,6 +90,19 @@ anterior para una reversión controlada; nunca elimines los volúmenes al recrea
 únicamente MLflow. La autenticación anónima y las rutas desconocidas siguen
 denegadas. Este parche no concede permisos nuevos sobre recursos ni sustituye
 el aprovisionamiento manual de cuentas.
+
+### Volumen de PostgreSQL con una contraseña equivocada
+
+PostgreSQL fija su contraseña al **primer arranque de un volumen vacío**; cambiar después
+`MLFLOW_DB_PASSWORD` en `.env` no la modifica. El servicio `postgres` rechaza los marcadores del ejemplo
+(`replace-with`, `changeme`) antes de inicializar el volumen, pero un volumen creado con otro valor
+equivocado seguirá exigiéndolo y MLflow fallará al autenticarse. Dos salidas:
+
+- Sin datos que conservar: `docker compose down -v` (destructivo: borra los volúmenes del proyecto) y
+  volver a levantar con la contraseña correcta.
+- Con datos: cambiar la contraseña dentro de la base (sin dejarla en el historial ni en `argv`):
+  `docker compose exec postgres psql -U mlflow -d mlflow` y, dentro de psql, `\password mlflow`;
+  después poner la misma contraseña en `MLFLOW_DB_PASSWORD`.
 
 Abre `http://127.0.0.1:5000` e inicia sesión con el usuario administrador local.
 Los clientes autenticados usan:

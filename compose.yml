@@ -2,11 +2,26 @@ name: invoiceops-mlflow
 
 services:
   postgres:
-    image: postgres:16.9-alpine
+    image: postgres:16.9-alpine@sha256:7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7
     environment:
       POSTGRES_DB: mlflow
       POSTGRES_USER: mlflow
-      POSTGRES_PASSWORD: mlflow-local-password
+      POSTGRES_PASSWORD: ${MLFLOW_DB_PASSWORD:?MLFLOW_DB_PASSWORD must be set (see mlflow-local.example.env)}
+    # The first start of an empty volume bakes POSTGRES_PASSWORD into the database. A placeholder
+    # must therefore be refused HERE, before initdb: rejecting it later (the MLflow entrypoint)
+    # would leave a volume initialized with a password nobody should use. If that already
+    # happened, see README, "Volumen de PostgreSQL con una contraseña equivocada".
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        set +x; set -eu;
+        case "$$POSTGRES_PASSWORD" in
+          *replace-with*|*REPLACE_WITH*|*changeme*) echo 'MLFLOW_DB_PASSWORD (POSTGRES_PASSWORD) must not use the example placeholder' >&2; exit 1 ;;
+        esac;
+        exec docker-entrypoint.sh "$$@"
+      - postgres-placeholder-guard
+    command: ["postgres"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mlflow -d mlflow"]
       interval: 5s
@@ -14,14 +29,16 @@ services:
       retries: 12
       start_period: 10s
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mlflow_postgres_data:/var/lib/postgresql/data
 
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    # Upstream minio/minio and quay.io/minio/* tags are no longer pullable: community fork pinned by
+    # tag AND digest (see GATEWAY.md, "Riesgos residuales").
+    image: ${MINIO_IMAGE:-pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372}
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: minio-local-password
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set (see mlflow-local.example.env)}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set (see mlflow-local.example.env)}
     healthcheck:
       test: ["CMD-SHELL", "timeout 5s bash -c ':> /dev/tcp/127.0.0.1/9000' || exit 1"]
       interval: 5s
@@ -29,10 +46,10 @@ services:
       retries: 12
       start_period: 10s
     volumes:
-      - minio_data:/data
+      - mlflow_minio_data:/data
 
   minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-03-12T17-29-24Z
+    image: ${MINIO_MC_IMAGE:-pgsty/mc:RELEASE.2026-11-12T00-00-00Z@sha256:b532278b7a3747dbab6fe45eebb40a653efa704e6758e24e9d9ec54fc96c1800}
     depends_on:
       minio:
         condition: service_healthy
@@ -43,6 +60,9 @@ services:
         [ "$$(command -v printf)" = printf ] || { echo 'MinIO initializer requires builtin printf' >&2; exit 1; };
         : "$${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}";
         : "$${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}";
+        case "$$MINIO_ROOT_USER:$$MINIO_ROOT_PASSWORD" in
+          *replace-with*|*REPLACE_WITH*|*changeme*) echo 'MinIO credentials must not use the example placeholder' >&2; exit 1 ;;
+        esac;
         json_low=$$(printf '\001'); json_high=$$(printf '\037'); json_meta='"\';
         json_quote() {
           json_output='"';
@@ -77,8 +97,8 @@ services:
           status=$$?; echo 'MinIO bucket initialization failed' >&2; exit "$$status";
         }
     environment:
-      MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: minio-local-password
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set (see mlflow-local.example.env)}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set (see mlflow-local.example.env)}
     restart: "no"
 
   mlflow:
@@ -92,15 +112,15 @@ services:
       minio-init:
         condition: service_completed_successfully
     environment:
-      AWS_ACCESS_KEY_ID: minio
-      AWS_SECRET_ACCESS_KEY: minio-local-password
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set (see mlflow-local.example.env)}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set (see mlflow-local.example.env)}
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       MLFLOW_ARTIFACTS_DESTINATION: s3://mlflow-artifacts
       MLFLOW_AUTH_CONFIG_PATH: /run/mlflow-auth/auth.ini
-      MLFLOW_AUTH_DATABASE_URI: postgresql+psycopg2://mlflow:mlflow-local-password@postgres:5432/mlflow
+      MLFLOW_AUTH_DATABASE_URI: postgresql+psycopg2://mlflow:${MLFLOW_DB_PASSWORD:?MLFLOW_DB_PASSWORD must be set (see mlflow-local.example.env)}@postgres:5432/mlflow
       MLFLOW_AUTH_ADMIN_USERNAME: ${MLFLOW_AUTH_ADMIN_USERNAME:?MLFLOW_AUTH_ADMIN_USERNAME must be set in .env}
       MLFLOW_AUTH_ADMIN_PASSWORD: ${MLFLOW_AUTH_ADMIN_PASSWORD:?MLFLOW_AUTH_ADMIN_PASSWORD must be set in .env}
-      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://mlflow:mlflow-local-password@postgres:5432/mlflow
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://mlflow:${MLFLOW_DB_PASSWORD:?MLFLOW_DB_PASSWORD must be set (see mlflow-local.example.env)}@postgres:5432/mlflow
       MLFLOW_FLASK_SERVER_SECRET_KEY: ${MLFLOW_FLASK_SERVER_SECRET_KEY:?MLFLOW_FLASK_SERVER_SECRET_KEY must be set in .env}
       MLFLOW_HOST: 0.0.0.0
       MLFLOW_PORT: "5000"
@@ -113,6 +133,12 @@ services:
       retries: 12
       start_period: 60s
 
+# Keys are prefixed so this file can be `include`d next to the app (which owns `postgres_data`).
+# Volume names follow the compose project: `invoiceops` (invoiceops-stack) resolves to
+# invoiceops_mlflow_postgres_data / invoiceops_mlflow_minio_data, which is what the stack expects;
+# a standalone checkout (project `invoiceops-mlflow`) gets invoiceops-mlflow_mlflow_*. Data created
+# before the rename lives in invoiceops-mlflow_postgres_data / _minio_data: copy it with
+# scripts/migrate-standalone-volumes.sh (see GATEWAY.md, "Volúmenes: renombre y migración").
 volumes:
-  postgres_data:
-  minio_data:
+  mlflow_postgres_data:
+  mlflow_minio_data:

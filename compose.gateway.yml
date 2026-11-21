@@ -1,0 +1,116 @@
+# Production overlay (MLOPS-02). Use together with compose.yml. In production it is consumed by
+# invoiceops-stack (`include:` of compose.yml + this file, see invoiceops-stack/README.md, "Levantar todo"), which
+# owns the shared networks. This file only REFERENCES the networks `edge` and `api` (defined by the
+# app's compose.production.yml), so on its own it needs compose.networks.yml as a third file
+# (drills, backup tests):
+#
+#   docker compose -f compose.yml -f compose.gateway.yml -f compose.networks.yml --env-file .env up -d --build --wait
+#
+# Only the gateway is reachable from outside the project: no host ports, and it joins the
+# tunnel network (aglai_edge, TLS ends at Cloudflare). PostgreSQL, MinIO and MLflow stay on the private
+# project network. Every secret is required: a missing one fails before anything starts.
+services:
+  postgres:
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${MLFLOW_DB_PASSWORD:?MLFLOW_DB_PASSWORD must be set in .env}
+
+  minio:
+    # Same pin as compose.yml (tag + digest); override MINIO_IMAGE to use your own mirror.
+    image: ${MINIO_IMAGE:-pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372}
+    restart: unless-stopped
+    # No web console: it would be one more admin surface to protect.
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}
+
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-pgsty/mc:RELEASE.2026-11-12T00-00-00Z@sha256:b532278b7a3747dbab6fe45eebb40a653efa704e6758e24e9d9ec54fc96c1800}
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}
+
+  mlflow:
+    restart: unless-stopped
+    command: mlflow server --app-name=basic-auth --enable-workspaces --serve-artifacts --uvicorn-opts "--timeout-keep-alive=120"
+    # compose.yml publishes 127.0.0.1:5000 for local work; production exposes nothing.
+    ports: !override []
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}
+      MLFLOW_AUTH_DATABASE_URI: postgresql+psycopg2://mlflow:${MLFLOW_DB_PASSWORD:?MLFLOW_DB_PASSWORD must be set in .env}@postgres:5432/mlflow
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://mlflow:${MLFLOW_DB_PASSWORD:?MLFLOW_DB_PASSWORD must be set in .env}@postgres:5432/mlflow
+      # Hosts MLflow answers to: the gateway (mlflow:5000) and its own health check.
+      MLFLOW_SERVER_ALLOWED_HOSTS: "mlflow:5000,127.0.0.1:5000,localhost:5000"
+      # The entrypoint refuses to start with the throwaway credentials published in
+      # mlflow-local.example.env: they are for a local, standalone compose only.
+      MLFLOW_REJECT_PUBLIC_CREDENTIALS: "1"
+
+  # Clients only ever talk to this service: Bearer InvoiceOps token or a gateway session (redirect handoff with InvoiceOps).
+  gateway:
+    build:
+      context: ./gateway
+    restart: unless-stopped
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    environment:
+      GATEWAY_UPSTREAM_URL: http://mlflow:5000
+      GATEWAY_UPSTREAM_USERNAME: ${MLFLOW_AUTH_ADMIN_USERNAME:?MLFLOW_AUTH_ADMIN_USERNAME must be set in .env}
+      GATEWAY_UPSTREAM_PASSWORD: ${MLFLOW_AUTH_ADMIN_PASSWORD:?MLFLOW_AUTH_ADMIN_PASSWORD must be set in .env}
+      GATEWAY_INTROSPECTION_URL: ${GATEWAY_INTROSPECTION_URL:-http://invoiceops-backend:3000}
+      GATEWAY_INTROSPECTION_SECRET: ${INTERNAL_INTROSPECTION_SECRET:?INTERNAL_INTROSPECTION_SECRET must be set in .env}
+      GATEWAY_PUBLIC_ORIGIN: ${GATEWAY_PUBLIC_ORIGIN:?GATEWAY_PUBLIC_ORIGIN must be set in .env (https://mlflow-invoiceops.<domain>)}
+      # Browser sign-in handoff: unauthenticated navigations are sent to this origin.
+      GATEWAY_APP_ORIGIN: ${APP_PUBLIC_URL:?APP_PUBLIC_URL must be set in .env (https://invoiceops.<domain>)}
+      GATEWAY_SERVICE_READ_TOKEN: ${GATEWAY_SERVICE_READ_TOKEN:-}
+      # Every documented GATEWAY_* setting is forwarded with its default, so a value put in
+      # .env really reaches the container. tests/test_compose_and_docs_contracts.py keeps this list equal to
+      # what gateway/src/.../config.py reads.
+      GATEWAY_MAX_ARTIFACT_BYTES: ${GATEWAY_MAX_ARTIFACT_BYTES:-10737418240}
+      GATEWAY_MAX_BODY_BYTES: ${GATEWAY_MAX_BODY_BYTES:-10485760}
+      GATEWAY_CACHE_ACTIVE_SECONDS: ${GATEWAY_CACHE_ACTIVE_SECONDS:-30}
+      GATEWAY_CACHE_INACTIVE_SECONDS: ${GATEWAY_CACHE_INACTIVE_SECONDS:-5}
+      GATEWAY_CONTEXT_COOKIE_MAX_AGE: ${GATEWAY_CONTEXT_COOKIE_MAX_AGE:-43200}
+      GATEWAY_MAX_CONCURRENT_PER_PRINCIPAL: ${GATEWAY_MAX_CONCURRENT_PER_PRINCIPAL:-16}
+      GATEWAY_UPLOAD_DEADLINE_SECONDS: ${GATEWAY_UPLOAD_DEADLINE_SECONDS:-3600}
+      GATEWAY_AUTH_FAILURE_LIMIT: ${GATEWAY_AUTH_FAILURE_LIMIT:-120}
+      GATEWAY_AUTH_FAILURE_WINDOW_SECONDS: ${GATEWAY_AUTH_FAILURE_WINDOW_SECONDS:-60}
+      GATEWAY_HANDOFF_FAILURE_LIMIT: ${GATEWAY_HANDOFF_FAILURE_LIMIT:-20}
+      # Empty: the audit digest key is derived from the introspection secret (GATEWAY.md).
+      GATEWAY_AUDIT_HMAC_KEY: ${GATEWAY_AUDIT_HMAC_KEY:-}
+      # Behind the Cloudflare tunnel the TCP peer is the connector; the real client IP is in this
+      # header (only the tunnel reaches the gateway from outside). Used to throttle failed auth.
+      GATEWAY_CLIENT_IP_HEADER: ${GATEWAY_CLIENT_IP_HEADER-cf-connecting-ip}
+    expose:
+      - "8080"
+    # Hardening. Measured: ~28 MiB resident after 400 requests, 1 process; worst case
+    # (20k cached identities + 200 streaming connections) stays well under 256 MiB.
+    mem_limit: 256m
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    networks:
+      default:
+      # edge (aglai_edge): where the Cloudflare tunnel connector (cloudflared) lives. It reaches this
+      # service as http://invoiceops-mlflow-gateway:8080 (TLS ends at Cloudflare).
+      edge:
+        aliases: [invoiceops-mlflow-gateway]
+      # api (invoiceops_api): shared with the InvoiceOps backend (introspection, internal reads) and
+      # the Model API. The alias is unique on that network (the service name "gateway" is not).
+      api:
+        aliases: [invoiceops-mlflow-gateway]
+
+  # One-off tools for backup/restore (profile "tools", never started by `up`). The credentials
+  # reach mc through the environment only, never through argv.
+  minio-tools:
+    image: ${MINIO_MC_IMAGE:-pgsty/mc:RELEASE.2026-11-12T00-00-00Z@sha256:b532278b7a3747dbab6fe45eebb40a653efa704e6758e24e9d9ec54fc96c1800}
+    profiles: ["tools"]
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      MC_HOST_local: http://${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env}:${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}@minio:9000
+    restart: "no"

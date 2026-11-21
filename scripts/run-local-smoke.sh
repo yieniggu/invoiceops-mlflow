@@ -59,6 +59,7 @@ record_scenario() {
     exit_code=$?
   fi
 
+  # shellcheck disable=SC2016 # the backticks are literal Markdown
   printf '| %s | `%s` | %s | %s |\n' \
     "$scenario" "$command" "$exit_code" "$assertion" >>"$receipt_tmp"
   [ "$exit_code" -eq 0 ]
@@ -113,6 +114,7 @@ trap 'handle_signal INT 130' INT
 trap 'handle_signal TERM 143' TERM
 
 set -a
+# shellcheck source=/dev/null
 . "$env_file"
 set +a
 
@@ -120,8 +122,12 @@ set +a
 : "${MLFLOW_AUTH_ADMIN_PASSWORD:?MLFLOW_AUTH_ADMIN_PASSWORD must be set in the smoke environment}"
 : "${MLFLOW_FLASK_SERVER_SECRET_KEY:?MLFLOW_FLASK_SERVER_SECRET_KEY must be set in the smoke environment}"
 
-case "$MLFLOW_AUTH_ADMIN_USERNAME:$MLFLOW_AUTH_ADMIN_PASSWORD:$MLFLOW_FLASK_SERVER_SECRET_KEY" in
-  *replace-with-initial-admin-username*|*replace-with-generated-password*|*replace-with-generated-secret-key*)
+: "${MLFLOW_DB_PASSWORD:?MLFLOW_DB_PASSWORD must be set in the smoke environment}"
+: "${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in the smoke environment}"
+: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in the smoke environment}"
+
+case "$MLFLOW_AUTH_ADMIN_USERNAME:$MLFLOW_AUTH_ADMIN_PASSWORD:$MLFLOW_FLASK_SERVER_SECRET_KEY:$MLFLOW_DB_PASSWORD:$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD" in
+  *replace-with-initial-admin-username*|*replace-with-generated-password*|*replace-with-generated-secret-key*|*replace-with-generated-db-password*|*replace-with-generated-minio-user*|*replace-with-generated-minio-password*)
     printf '%s\n' 'Smoke environment still contains an example placeholder.' >&2
     exit 65
     ;;
@@ -162,6 +168,7 @@ if status="$(curl -sS -o /dev/null -w '%{http_code}' "http://${host_port}/")"; t
 else
   curl_exit_code=$?
 fi
+# shellcheck disable=SC2016 # the backticks are literal Markdown
 printf '| %s | `%s` | %s | %s |\n' \
   'HTTP anónimo' \
   "curl -sS -o /dev/null -w '%{http_code}' <endpoint MLflow aislado>" \

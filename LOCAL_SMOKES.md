@@ -33,12 +33,12 @@ afectar una ejecución superpuesta.
 ## Persistencia autenticada de MLflow
 
 Desde este repositorio, crea un archivo de entorno local dedicado sin leer ni
-copiar un `.env` existente:
+copiar un `.env` existente. Antes del último comando, sustituye localmente cada
+marcador de `smoke.env` por valores únicos:
 
 ```bash
 cp smoke.env.example smoke.env
 chmod 600 smoke.env
-# Sustituye localmente cada marcador por valores únicos.
 ./scripts/run-local-smoke.sh smoke.env
 ```
 

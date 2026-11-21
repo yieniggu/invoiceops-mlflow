@@ -52,16 +52,14 @@ class PostgreSQLDriverContractTests(unittest.TestCase):
                 self.assertEqual(parsed.path, "/mlflow")
 
     def test_base_compose_uses_explicit_postgresql_driver(self):
-        self.assert_database_uris_use_installed_driver(
-            mlflow_environment("compose.yml"), "mlflow-local-password"
-        )
+        # The password comes from the environment (no fixed credential in compose.yml).
+        password = "${MLFLOW_DB_PASSWORD:?MLFLOW_DB_PASSWORD must be set (see mlflow-local.example.env)}"
+        self.assert_database_uris_use_installed_driver(mlflow_environment("compose.yml"), password)
 
-    def test_local_overlay_uses_explicit_postgresql_driver(self):
-        local_password = "${LOCAL_MLFLOW_DB_PASSWORD:?Set the local MLflow database password}"
-        overlay = mlflow_environment("compose.invoiceops-local.yml")
-        self.assert_database_uris_use_installed_driver(overlay, local_password)
-        merged = mlflow_environment("compose.yml") | overlay
-        self.assert_database_uris_use_installed_driver(merged, local_password)
+    def test_production_overlay_uses_explicit_postgresql_driver(self):
+        password = "${MLFLOW_DB_PASSWORD:?MLFLOW_DB_PASSWORD must be set in .env}"
+        overlay = mlflow_environment("compose.gateway.yml")
+        self.assert_database_uris_use_installed_driver(overlay, password)
 
 
 if __name__ == "__main__":

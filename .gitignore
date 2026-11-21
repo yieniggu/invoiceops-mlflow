@@ -2,7 +2,6 @@
 .env
 .env.*
 !.env.example
-invoiceops-local.env
 smoke.env
 .codegraph/
 __pycache__/
@@ -17,3 +16,6 @@ backups/
 .DS_Store
 *.log
 LOCAL_SMOKE_RECEIPT.md
+
+# Build metadata
+*.egg-info/
