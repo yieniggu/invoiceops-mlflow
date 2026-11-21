@@ -1,0 +1,89 @@
+name: Gateway CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gateway-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gateway:
+    name: Gateway ruff and pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: gateway
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: '0.12.5'
+          python-version: '3.12'
+          enable-cache: false
+      - name: Check lockfile
+        run: uv lock --check
+      - name: Install locked dependencies (including the real MLflow used by the tests)
+        run: uv sync --locked --extra test
+      - name: Lint
+        run: uv run --locked --no-sync ruff check .
+      - name: Check formatting
+        run: uv run --locked --no-sync ruff format --check .
+      - name: Run tests
+        run: uv run --locked --no-sync pytest -q
+
+  scripts:
+    name: Shell scripts and repository contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: ShellCheck (every script, warnings and info included)
+        run: shellcheck scripts/*.sh docker/*.sh
+      - name: Install the YAML parser used by the contract tests
+        run: python3 -m pip install --disable-pip-version-check pyyaml==6.0.3
+      - name: Repository contract tests (compose, entrypoint, runbook guard, isolation matrix stub)
+        run: python3 -m unittest discover -s tests -v
+
+  images:
+    name: Compose config and gateway image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate the production compose files with dummy values
+        env:
+          MLFLOW_AUTH_ADMIN_USERNAME: ci-admin
+          MLFLOW_AUTH_ADMIN_PASSWORD: ci-admin-password-0123456789abcdef
+          MLFLOW_FLASK_SERVER_SECRET_KEY: ci-flask-secret-0123456789abcdef
+          MLFLOW_DB_PASSWORD: ci-db-password
+          MINIO_ROOT_USER: ci-minio-user
+          MINIO_ROOT_PASSWORD: ci-minio-password
+          INTERNAL_INTROSPECTION_SECRET: ci-introspection-secret-0123456789abcdef
+          GATEWAY_PUBLIC_ORIGIN: https://mlflow.example.test
+          APP_PUBLIC_URL: https://app.example.test
+        run: docker compose -f compose.yml -f compose.gateway.yml -f compose.networks.yml config -q
+      - name: Validate the standalone compose file with the throwaway local values
+        run: docker compose --env-file mlflow-local.example.env --env-file smoke.env.example -f compose.yml config -q
+      - name: Build the gateway image
+        run: docker build --tag invoiceops-mlflow-gateway:ci gateway
+      - name: Build the MLflow image for the production platform (hash-pinned wheels, linux/amd64)
+        run: docker build --platform linux/amd64 --file Dockerfile.mlflow --tag invoiceops-mlflow:ci .
