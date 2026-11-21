@@ -1,0 +1,41 @@
+[project]
+name = "invoiceops-mlflow-gateway"
+version = "0.1.0"
+description = "Authenticating, workspace-enforcing reverse proxy in front of MLflow 3.16.1"
+requires-python = ">=3.12"
+dependencies = [
+  "anyio==4.16.0",
+  "starlette==1.10.0",
+  "httpx==0.28.1",
+  "uvicorn==0.54.0",
+]
+
+[project.optional-dependencies]
+# The tests run a real MLflow server and the real MLflow client against the gateway.
+test = [
+  "mlflow[auth]==3.16.1",
+  "pytest==9.2.0",
+  "ruff==0.17.6",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106", "S108", "S110", "S113", "S603"]
